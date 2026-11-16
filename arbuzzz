@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>PS1 Clown Mushroom</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+  canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; }
+  #hint {
+    position: fixed; bottom: 15px; left: 50%; transform: translateX(-50%);
+    color: #ccc; font-family: monospace; font-size: 14px; text-align: center;
+    background: rgba(0,0,0,0.5); padding: 8px 16px; border-radius: 8px;
+    pointer-events: none; user-select: none;
+  }
+  .ps1-overlay {
+    position: fixed; inset: 0; pointer-events: none; z-index: 10;
+    background: repeating-linear-gradient(
+      0deg, rgba(0,0,0,0.15) 0px, rgba(0,0,0,0.15) 1px, transparent 1px, transparent 3px
+    );
+  }
+</style>
+</head>
+<body>
+<div class="ps1-overlay"></div>
+<div id="hint">Мышь — вращение · Двойной клик/тап — прыжок</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// === Сцена PS1-стиля ===
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a2a1a);
+scene.fog = new THREE.Fog(0x1a2a1a, 8, 25);
+
+const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.1, 100);
+const renderer = new THREE.WebGLRenderer({ antialias: false });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(0.35); // Низкое разрешение = PS1-эффект
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.BasicShadowMap;
+document.body.appendChild(renderer.domElement);
+
+// Свет
+const ambient = new THREE.AmbientLight(0x889988, 0.7);
+scene.add(ambient);
+const dir = new THREE.DirectionalLight(0xffeedd, 1.2);
+dir.position.set(5, 10, 5);
+dir.castShadow = true;
+dir.shadow.mapSize.width = 512;
+dir.shadow.mapSize.height = 512;
+scene.add(dir);
+const rim = new THREE.PointLight(0xff4444, 0.8, 10);
+rim.position.set(-3, 2, 2);
+scene.add(rim);
+
+// Земля
+const groundGeo = new THREE.PlaneGeometry(60, 60, 1, 1);
+const groundMat = new THREE.MeshLambertMaterial({ color: 0x2d1f14 });
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI/2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// ===== ПЕРСОНАЖ =====
+const character = new THREE.Group();
+
+// Ножка гриба (цилиндр, низкополигональный)
+const stemGeo = new THREE.CylinderGeometry(0.35, 0.45, 1.4, 8);
+const stemMat = new THREE.MeshLambertMaterial({ color: 0xe8e0c0, flatShading: true });
+const stem = new THREE.Mesh(stemGeo, stemMat);
+stem.position.y = 0.7;
+stem.castShadow = true;
+character.add(stem);
+
+// Шляпка гриба (полусфера)
+const capGeo = new THREE.SphereGeometry(1.1, 10, 6, 0, Math.PI*2, 0, Math.PI/2);
+const capMat = new THREE.MeshLambertMaterial({ color: 0xcc1111, flatShading: true });
+const cap = new THREE.Mesh(capGeo, capMat);
+cap.position.y = 1.4;
+cap.castShadow = true;
+character.add(cap);
+
+// Белые пятна на шляпке
+const dotMat = new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true });
+const dotPositions = [
+  [0, 1.9, 0.9], [0.6, 1.8, 0.6], [-0.6, 1.8, 0.5],
+  [0.9, 1.6, 0], [-0.8, 1.65, -0.4], [0.3, 1.95, -0.7],
+  [-0.3, 1.9, -0.8], [0.7, 1.75, -0.5]
+];
+dotPositions.forEach(pos => {
+  const dot = new THREE.Mesh(new THREE.SphereGeometry(0.13, 5, 4), dotMat);
+  dot.position.set(...pos);
+  character.add(dot);
+});
+
+// Лицо (белая маска) — на ножке спереди
+const faceGeo = new THREE.SphereGeometry(0.32, 8, 6);
+const faceMat = new THREE.MeshLambertMaterial({ color: 0xf0f0f0, flatShading: true });
+const face = new THREE.Mesh(faceGeo, faceMat);
+face.position.set(0, 0.95, 0.3);
+face.scale.set(1.2, 1, 0.4);
+character.add(face);
+
+// Глаза
+const eyeGeo = new THREE.SphereGeometry(0.09, 5, 4);
+const eyeWhiteMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+const pupilMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+[[-0.15, 1.05, 0.55], [0.15, 1.05, 0.55]].forEach(p => {
+  const eye = new THREE.Mesh(eyeGeo, eyeWhiteMat);
+  eye.position.set(...p);
+  character.add(eye);
+  const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.045, 4, 3), pupilMat);
+  pupil.position.set(p[0], p[1], p[2]+0.06);
+  character.add(pupil);
+});
+
+// Красный клоунский рот
+const mouthGeo = new THREE.TorusGeometry(0.16, 0.045, 4, 8, Math.PI);
+const mouthMat = new THREE.MeshBasicMaterial({ color: 0xcc0000 });
+const mouth = new THREE.Mesh(mouthGeo, mouthMat);
+mouth.position.set(0, 0.88, 0.58);
+mouth.rotation.z = Math.PI;
+character.add(mouth);
+// Уголки рта (красный нос-клоун)
+const nose = new THREE.Mesh(new THREE.SphereGeometry(0.08, 5, 4),
+  new THREE.MeshBasicMaterial({ color: 0xdd0000 }));
+nose.position.set(0, 0.92, 0.63);
+character.add(nose);
+
+// Сигара
+const cigarGeo = new THREE.CylinderGeometry(0.06, 0.07, 0.7, 6);
+const cigarMat = new THREE.MeshLambertMaterial({ color: 0x5a3a1a, flatShading: true });
+const cigar = new THREE.Mesh(cigarGeo, cigarMat);
+cigar.position.set(0.35, 0.88, 0.5);
+cigar.rotation.z = Math.PI/2.5;
+cigar.rotation.y = 0.3;
+character.add(cigar);
+// Горящий кончик
+const ember = new THREE.Mesh(new THREE.SphereGeometry(0.07, 4, 3),
+  new THREE.MeshBasicMaterial({ color: 0xff3300 }));
+ember.position.set(0.63, 0.72, 0.5);
+character.add(ember);
+
+// Дым (несколько полупрозрачных сфер)
+const smokeMat = new THREE.MeshBasicMaterial({ color: 0xaaaaaa, transparent: true, opacity: 0.35 });
+for (let i = 0; i < 5; i++) {
+  const s = new THREE.Mesh(new THREE.SphereGeometry(0.1 + i*0.06, 4, 3), smokeMat);
+  s.position.set(0.6 + i*0.12, 0.9 + i*0.18, 0.5);
+  character.add(s);
+}
+
+character.position.y = 0;
+scene.add(character);
+
+// ===== КАМЕРА И УПРАВЛЕНИЕ =====
+const camState = {
+  theta: 0,      // горизонтальный угол
+  phi: Math.PI/2.5, // вертикальный
+  radius: 4.5,
+  target: new THREE.Vector3(0, 1, 0)
+};
+
+let isDragging = false;
+let lastX = 0, lastY = 0;
+
+function updateCamera() {
+  const x = camState.target.x + camState.radius * Math.sin(camState.phi) * Math.sin(camState.theta);
+  const y = camState.target.y + camState.radius * Math.cos(camState.phi);
+  const z = camState.target.z + camState.radius * Math.sin(camState.phi) * Math.cos(camState.theta);
+  camera.position.set(x, y, z);
+  camera.lookAt(camState.target);
+}
+updateCamera();
+
+// Вращение мышью
+renderer.domElement.addEventListener('mousedown', e => {
+  isDragging = true; lastX = e.clientX; lastY = e.clientY;
+});
+window.addEventListener('mouseup', () => isDragging = false);
+window.addEventListener('mousemove', e => {
+  if (!isDragging) return;
+  const dx = e.clientX - lastX;
+  const dy = e.clientY - lastY;
+  camState.theta -= dx * 0.008;
+  camState.phi = Math.max(0.4, Math.min(Math.PI/2, camState.phi - dy * 0.008));
+  lastX = e.clientX; lastY = e.clientY;
+  updateCamera();
+});
+
+// Тач: вращение + двойной тап
+let lastTap = 0;
+let touchStartX = 0, touchStartY = 0, touchMoved = false;
+
+renderer.domElement.addEventListener('touchstart', e => {
+  const t = e.touches[0];
+  touchStartX = t.clientX; touchStartY = t.clientY; touchMoved = false;
+  lastX = t.clientX; lastY = t.clientY;
+  if (e.touches.length === 1) {
+    const now = Date.now();
+    if (now - lastTap < 300) {
+      jump();
+      lastTap = 0;
+    } else {
+      lastTap = now;
+    }
+  }
+}, { passive: false });
+
+renderer.domElement.addEventListener('touchmove', e => {
+  const t = e.touches[0];
+  if (Math.abs(t.clientX - touchStartX) > 5 || Math.abs(t.clientY - touchStartY) > 5) touchMoved = true;
+  const dx = t.clientX - lastX;
+  const dy = t.clientY - lastY;
+  camState.theta -= dx * 0.01;
+  camState.phi = Math.max(0.4, Math.min(Math.PI/2, camState.phi - dy * 0.01));
+  lastX = t.clientX; lastY = t.clientY;
+  updateCamera();
+  e.preventDefault();
+}, { passive: false });
+
+// Двойной клик мышью — тоже прыжок (для удобства на ПК)
+let lastClick = 0;
+renderer.domElement.addEventListener('click', e => {
+  const now = Date.now();
+  if (now - lastClick < 300) jump();
+  lastClick = now;
+});
+
+// ===== ПРЫЖОК =====
+let jumpVel = 0;
+let isJumping = false;
+const GRAVITY = -0.03;
+
+function jump() {
+  if (isJumping) return;
+  isJumping = true;
+  jumpVel = 0.25;
+}
+
+// ===== АНИМАЦИЯ =====
+const clock = new THREE.Clock();
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = clock.getDelta();
+
+  // Прыжок
+  if (isJumping) {
+    character.position.y += jumpVel;
+    jumpVel += GRAVITY;
+    if (character.position.y <= 0) {
+      character.position.y = 0;
+      isJumping = false;
+      jumpVel = 0;
+    }
+  }
+
+  // Лёгкое покачивание персонажа (idle)
+  if (!isJumping) {
+    character.rotation.z = Math.sin(clock.elapsedTime * 1.5) * 0.03;
+  }
+
+  // Дым анимируется
+  character.children.forEach((c, i) => {
+    if (c.material === smokeMat) {
+      c.position.y += 0.004;
+      c.scale.multiplyScalar(1.002);
+      if (c.position.y > 2.6) {
+        c.position.set(0.6, 0.9, 0.5);
+        c.scale.set(1, 1, 1);
+      }
+    }
+  });
+
+  renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
